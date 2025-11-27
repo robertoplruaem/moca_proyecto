@@ -1,0 +1,13 @@
+
+# Ignorar datos y resultados grandes
+data/
+datasets/
+runs/
+production_weights/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.vscode/
+.env
+kaggle.json
+.DS_Store
