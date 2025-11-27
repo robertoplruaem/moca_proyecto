@@ -1,8 +1,8 @@
 task: detect
 mode: train
-model: yolov8m.pt
-data: ../datasets/01_autos/data.yaml
-epochs: 1
+model: yolov8n.pt
+data: ../../datasets/02_placas/data.yaml
+epochs: 30
 time: null
 patience: 20
 batch: -1
@@ -12,9 +12,9 @@ save_period: -1
 cache: false
 device: '0'
 workers: 8
-project: ../models/01_autos
-name: 20251124_v8m_clean_dataset
-exist_ok: false
+project: ../../models/02_placas
+name: 20251127_v8m_clean_tl_640
+exist_ok: true
 pretrained: true
 optimizer: auto
 verbose: true
@@ -86,13 +86,13 @@ nbs: 64
 hsv_h: 0.015
 hsv_s: 0.7
 hsv_v: 0.4
-degrees: 0.0
+degrees: 10.0
 translate: 0.1
 scale: 0.5
 shear: 0.0
 perspective: 0.0
 flipud: 0.0
-fliplr: 0.5
+fliplr: 0.0
 bgr: 0.0
 mosaic: 1.0
 mixup: 0.0
@@ -103,4 +103,4 @@ auto_augment: randaugment
 erasing: 0.4
 cfg: null
 tracker: botsort.yaml
-save_dir: /home/roberto/proyecto/notebooks/models/01_autos/20251124_v8m_clean_dataset
+save_dir: /home/roberto/proyecto/models/02_placas/20251127_v8m_clean_tl_640
