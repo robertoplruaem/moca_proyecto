@@ -17,7 +17,7 @@ PROJECT_ROOT = FILE_PATH.parent.parent.parent
 
 DIR_FUENTES = PROJECT_ROOT / "data" / "resources" / "fonts"
 DIR_PLANTILLAS = PROJECT_ROOT / "data" / "resources" / "templates"
-DIR_DATASET = PROJECT_ROOT / "data" / "processed" / "03_caracteres_synthetic"
+DIR_DATASET = PROJECT_ROOT / "data" / "processed" / "03_caracteres_sinteticos"
 
 os.makedirs(DIR_FUENTES, exist_ok=True)
 os.makedirs(DIR_PLANTILLAS, exist_ok=True)
@@ -94,7 +94,7 @@ def find_safe_hyphen_font(lista_fuentes, size, fallback_absoluto_path):
             return font
     return None
 
-# --- 5. LÓGICA DE ESTAMPADO (MEJORADA: STROKE) ---
+# --- 5. LÓGICA DE ESTAMPADO ---
 
 def estampar_placa(ruta_plantilla, lista_fuentes, texto_placa):
     if ruta_plantilla not in PLANTILLAS_CACHE:
@@ -115,7 +115,6 @@ def estampar_placa(ruta_plantilla, lista_fuentes, texto_placa):
         ruta_font = random.choice(lista_fuentes)
         fnt_placa = get_cached_font(ruta_font, size_placa)
         
-        # Prueba de Tinta
         if fnt_placa is None: continue
         test_img = Image.new('1', (50, 50), 0)
         ImageDraw.Draw(test_img).text((10, 10), "A0", font=fnt_placa, fill=1)
@@ -158,10 +157,7 @@ def estampar_placa(ruta_plantilla, lista_fuentes, texto_placa):
     else: 
         color_texto = (255, 255, 255) # Blanco Puro
 
-    # E. DIBUJADO CON "STROKE" (Grosor Extra)
-    # Calculamos un grosor proporcional (aprox 1.5% del tamaño de letra)
-    # En la imagen de trabajo (doble resolución) esto añade unos 3px,
-    # que al reducirse a la final quedan en 1.5px de nitidez extra.
+    # E. Dibujado con Stroke
     grosor_borde = max(1, int(size_placa * 0.015)) 
     
     pos_x = (ANCHO_IMG - ancho_total) / 2
@@ -183,16 +179,11 @@ def estampar_placa(ruta_plantilla, lista_fuentes, texto_placa):
         dy = pos_y - (ch/2) - bbox[1]
         dx = pos_x
         
-        # --- DIBUJO REFORZADO ---
-        # Usamos stroke_width y stroke_fill para engrosar la letra
         draw.text((dx, dy), char, font=font, fill=color_texto, 
                   stroke_width=grosor_borde, stroke_fill=color_texto)
-        
-        # Aplicamos lo mismo a la máscara para que el recorte sea preciso
         mask_draw.text((dx, dy), char, font=font, fill=255, 
                        stroke_width=grosor_borde, stroke_fill=255)
         
-        # Ajustamos el bbox para incluir el grosor extra
         bboxes.append({
             "char": char, 
             "bbox_limpio": [
@@ -209,7 +200,7 @@ def estampar_placa(ruta_plantilla, lista_fuentes, texto_placa):
 
     return img, mask, bboxes, None
 
-# --- 6. TRANSFORMACIONES (NEGROS PROTEGIDOS) ---
+# --- 6. TRANSFORMACIONES (CON INVERSIÓN) ---
 
 def apply_transformations(img_pil, bboxes, mask_pil):
     img = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
@@ -233,7 +224,13 @@ def apply_transformations(img_pil, bboxes, mask_pil):
     mask_full = np.ones((h, w), dtype=np.uint8) * 255
     mask_plate_tf = cv2.warpPerspective(mask_full, M, (w,h), borderValue=0)
     
-    # 2. TONO
+    # 2. INVERSIÓN (NEGATIVO) - NUEVO!
+    # Invierte los colores (Blanco <-> Negro) para simular placas oscuras/nocturnas.
+    # Se hace ANTES del ruido para que el ruido afecte igual.
+    if random.random() < 0.25: # 25% de las imágenes serán negativas
+        img = cv2.bitwise_not(img)
+
+    # 3. TONO
     if random.random() < 0.7:
         b_s = random.uniform(0.9, 1.1)
         r_s = random.uniform(0.9, 1.1)
@@ -243,15 +240,13 @@ def apply_transformations(img_pil, bboxes, mask_pil):
         img = cv2.merge([B, G, R])
         img = np.clip(img, 0, 255).astype(np.uint8)
 
-    # 3. ILUMINACIÓN (CON PROTECCIÓN DE NEGROS)
+    # 4. ILUMINACIÓN
     if random.random() < 0.8:
-        # Reducimos el brillo positivo máximo para evitar lavar el negro
-        # Antes: (-90, 50). Ahora: (-90, 25)
         brightness = random.randint(-90, 25) 
-        contrast = random.uniform(0.8, 1.4) # Subimos contraste mínimo
+        contrast = random.uniform(0.8, 1.4)
         img = cv2.convertScaleAbs(img, alpha=contrast, beta=brightness)
 
-    # 4. DEGRADACIÓN
+    # 5. DEGRADACIÓN
     if random.random() < 0.6:
         k = random.choice([3, 5, 7])
         img = cv2.GaussianBlur(img, (k, k), 0)
@@ -261,7 +256,7 @@ def apply_transformations(img_pil, bboxes, mask_pil):
         img = cv2.add(img.astype(np.int16), noise)
         img = np.clip(img, 0, 255).astype(np.uint8)
 
-    # 5. RECORTE
+    # 6. RECORTE
     nz = cv2.findNonZero(mask_plate_tf)
     if nz is not None:
         x, y, wn, hn = cv2.boundingRect(nz)
@@ -303,7 +298,6 @@ def init_worker(plantilla_paths, fuentes_paths):
     for p in plantilla_paths:
         try:
             with Image.open(p) as img:
-                # Transparencia -> Fondo Blanco
                 if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
                     img = img.convert('RGBA')
                     bg = Image.new('RGB', img.size, (255, 255, 255))
@@ -324,14 +318,11 @@ def worker_task(idx):
         plantilla = random.choice(list(PLANTILLAS_CACHE.keys()))
         texto = generar_texto_placa()
         
-        # 1. Generar
         img_pil, mask_pil, bboxes, err = estampar_placa(plantilla, FUENTES_DISPONIBLES, texto)
         if img_pil is None: return {'error': f"Estampado: {err}"}
             
-        # 2. Transformar
         img_cv, json_data = apply_transformations(img_pil, bboxes, mask_pil)
         
-        # Redimensionar
         img_cv = cv2.resize(img_cv, (ANCHO_PLACA, ALTO_PLACA))
         _, buf = cv2.imencode('.jpg', img_cv, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
         
@@ -344,13 +335,13 @@ def worker_task(idx):
 
 def generar_dataset(cantidad=20000):
     if not FUENTES_DISPONIBLES:
-        print(f"ERROR: Sin fuentes en {DIR_FUENTES}")
+        print(f"❌ ERROR: Sin fuentes en {DIR_FUENTES}")
         return
     if not PLANTILLAS_DISPONIBLES:
-        print(f"ERROR: Sin plantillas en {DIR_PLANTILLAS}")
+        print(f"❌ ERROR: Sin plantillas en {DIR_PLANTILLAS}")
         return
 
-    print(f"Generando {cantidad} placas (Alto Contraste)...")
+    print(f"🚀 Generando {cantidad} placas (Con Inversión Negativa)...")
     
     img_dir = DIR_DATASET / "images"
     lbl_dir = DIR_DATASET / "labels"
@@ -386,7 +377,7 @@ def generar_dataset(cantidad=20000):
                 f.write('\n'.join(lines))
             exitos += 1
 
-    print(f"\nTerminado. Exitos: {exitos} | Fallos: {len(errores_log)}")
+    print(f"\n🏁 Terminado. Exitos: {exitos} | Fallos: {len(errores_log)}")
     if errores_log: print("Errores:", errores_log[:3])
 
 if __name__ == "__main__":
