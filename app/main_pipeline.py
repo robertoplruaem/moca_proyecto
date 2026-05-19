@@ -9,17 +9,18 @@ import torch.nn.functional as F # Para ver la confianza
 
 # --- 1. IMPORTAR TU ARQUITECTURA ---
 # Asegúrate de que el archivo y la clase se llamen exactamente así
-from mi_arquitectura_ocr import CustomOCR_CNN
+from customOCR_CNN import CustomOCR_CNN
 
 # --- 2. CONFIGURACIÓN DE GPU ---
 # Esto asegura que la RTX 4070 Ti se utilice al máximo
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(f"🖥️ Procesador PyTorch configurado en: {device}")
+print(f"Procesador PyTorch configurado en: {device}")
 
 # --- 3. DICCIONARIO / ALFABETO ---
 # Aquí asumo los 10 números, 26 letras y el guion (-). 
 # IMPORTANTE: Ajusta el orden si en tu .ipynb original era diferente.
-ALFABETO = "-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+# ALFABETO = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+ALFABETO = "0123456789ABCDEFGHJKLMNPRSTUVWXYZ"
 
 # --- 4. RUTAS A TUS MODELOS ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -31,20 +32,20 @@ RUTA_YOLO_CLS = os.path.join(BASE_DIR, '../production_weights/03_yolo_cls_best.p
 detector_cls = YOLO(RUTA_YOLO_CLS)
 
 # --- 5. INICIALIZAR MODELOS ---
-print("⏳ Cargando modelos YOLO y PyTorch en memoria...")
+print("Cargando modelos YOLO y PyTorch en memoria...")
 
 # A. Cargar YOLO
 try:
     detector_autos = YOLO(RUTA_AUTOS)
     detector_placas = YOLO(RUTA_PLACAS)
-    print("✅ Modelos YOLO listos.")
+    print("Modelos YOLO listos.")
 except Exception as e:
-    print(f"❌ Error cargando YOLO: {e}")
+    print(f"Error cargando YOLO: {e}")
 
 # B. Cargar tu CNN Personalizada
 try:
     print("Cargando arquitectura y pesos de la CNN...")
-    # Instanciamos con 37 clases, según el tensor que detectamos
+    # Instanciamos con 33 clases, según el tensor que detectamos
     modelo_ocr = CustomOCR_CNN(num_classes=len(ALFABETO)) 
     
     # Cargar los pesos y enviarlo a la tarjeta de video
@@ -53,9 +54,9 @@ try:
     modelo_ocr.to(device)
     modelo_ocr.eval() # Modo evaluación (importante)
     
-    print("✅ Red Neuronal CNN OCR lista y cargada en GPU.")
+    print("Red Neuronal CNN OCR lista y cargada en GPU.")
 except Exception as e:
-    print(f"❌ Error crítico cargando la CNN: {e}")
+    print(f"Error crítico cargando la CNN: {e}")
 
 
 # --- 6. FUNCIONES DE PROCESAMIENTO ---
@@ -66,13 +67,9 @@ def corregir_normativa_mexicana(caracter):
     return mapeo.get(caracter, caracter)
 
 def segmentar_caracteres(img_placa):
-    """
-    Usa OpenCV para encontrar los contornos de cada letra en la placa
-    y recortarlos de izquierda a derecha.
-    """
     gris = cv2.cvtColor(img_placa, cv2.COLOR_BGR2GRAY)
     
-    # Binarización para lidiar con el contraste de placas (letras oscuras, fondo claro)
+    # Binarización con OTSU (Correcto para placas estándar)
     _, binaria = cv2.threshold(gris, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     
     contornos, _ = cv2.findContours(binaria, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -81,40 +78,34 @@ def segmentar_caracteres(img_placa):
     for c in contornos:
         x, y, w, h = cv2.boundingRect(c)
         area = w * h
-        aspect_ratio = w / float(h)
-        
-        # 1. Filtro para letras y números (Verticales)
-        es_letra = area > 200 and h > w
-        
-        # 2. Filtro para guiones (Horizontales y pequeños)
-        es_guion = area > 80 and w > h and aspect_ratio > 1.5
-        
-        if es_letra or es_guion:
+        # Ajustamos el filtro: h > w * 1.1 asegura que sea vertical y no ruido cuadrado
+        if area > 200 and h > w:
             cajas_letras.append((x, y, w, h))
             
-    # Ordenar las letras de izquierda a derecha (coordenada X)
     cajas_letras = sorted(cajas_letras, key=lambda b: b[0])
     
     recortes_individuales = []
-
-    # Definimos cuánto margen queremos (ej. 5 píxeles)
-    padding = 10
+    padding = 3
     alto_img, ancho_img = img_placa.shape[:2]
 
     for (x, y, w, h) in cajas_letras:
-        # Extraemos la imagen original A COLOR de cada letra
-        #letra_recortada = img_placa[y:y+h, x:x+w]
-        #recortes_individuales.append(letra_recortada)
-        # Calculamos las nuevas coordenadas con margen, 
-        # asegurándonos de no salirnos de los límites de la imagen con max() y min()
-        y1 = max(0, y - padding)
-        y2 = min(alto_img, y + h + padding)
-        x1 = max(0, x - padding)
-        x2 = min(ancho_img, x + w + padding)
+        y1, y2 = max(0, y - padding), min(alto_img, y + h + padding)
+        x1, x2 = max(0, x - padding), min(ancho_img, x + w + padding)
         
-        # Extraemos el recorte con el nuevo margen
         letra_recortada = img_placa[y1:y2, x1:x2]
-        recortes_individuales.append(letra_recortada)
+        
+        # --- NUEVO: REDIMENSIÓN A 64x64 ---
+        # 1. Convertimos a gris para la red neuronal
+        letra_gris = cv2.cvtColor(letra_recortada, cv2.COLOR_BGR2GRAY)
+        
+        # 2. Redimensionamos usando INTER_AREA para conservar la nitidez de los bordes
+        # Esto es vital para que tu CNN reconozca el patrón entrenado de 200k imágenes
+        letra_64 = cv2.resize(letra_gris, (64, 64), interpolation=cv2.INTER_AREA)
+        
+        # 3. Regresamos a 3 canales si tu red espera RGB (como en el entrenamiento)
+        letra_final = cv2.cvtColor(letra_64, cv2.COLOR_GRAY2RGB)
+        
+        recortes_individuales.append(letra_final)
         
     return recortes_individuales
 
@@ -135,15 +126,19 @@ def leer_caracter_con_cnn(img_letra):
 
     # 3. CONVERSIÓN A RGB Y REDIMENSIONADO (64x64 como pide tu red)
     img_rgb = cv2.cvtColor(binaria, cv2.COLOR_GRAY2RGB)
-    img_res = cv2.resize(img_rgb, (64, 64)) 
+    img_res = cv2.resize(img_rgb, (64, 64), interpolation=cv2.INTER_AREA)
     
-    # 4. NORMALIZACIÓN (Usa la de tu entrenamiento)
-    img_float = img_res.astype(np.float32) / 255.0
+    # 4. NORMALIZACIÓN (Estándar de PyTorch/ImageNet)
+    mean = np.array([0.485, 0.456, 0.406])
+    std = np.array([0.229, 0.224, 0.225])
+    img_float = (img_res.astype(np.float32) / 255.0 - mean) / std
     
     # 5. Tensor y GPU
     img_final = np.transpose(img_float, (2, 0, 1))
-    tensor_letra = torch.from_numpy(img_final).unsqueeze(0).to(device)
+    # tensor_letra = torch.from_numpy(img_final).unsqueeze(0).to(device)
+    tensor_letra = torch.from_numpy(img_final).float().unsqueeze(0).to(device)
 
+    modelo_ocr.eval()
     with torch.no_grad():
         logits = modelo_ocr(tensor_letra)
         

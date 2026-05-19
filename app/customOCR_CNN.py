@@ -14,7 +14,7 @@ from datetime import datetime
 from tqdm.notebook import tqdm
 
 class CustomOCR_CNN(nn.Module):
-    def __init__(self, num_classes=37):
+    def __init__(self, num_classes=33):
         super(CustomOCR_CNN, self).__init__()
         
         # Bloque Convolucional 1
@@ -23,28 +23,26 @@ class CustomOCR_CNN(nn.Module):
             nn.BatchNorm2d(32),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2) # Salida: 32x32
-        )
-        
+        )        
         # Bloque Convolucional 2
         self.conv2 = nn.Sequential(
             nn.Conv2d(32, 64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2) # Salida: 16x16
-        )
-        
+        )       
+
         # Bloque Convolucional 3
         self.conv3 = nn.Sequential(
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
             nn.BatchNorm2d(128),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2) # Salida: 8x8
-        )
-        
+        )        
         # Clasificador (Fully Connected)
         self.fc = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(128 * 8 * 8, 512), # Ajustar según IMG_SIZE (64 -> 8x8 feature map)
+            nn.Linear(128 * 8 * 8, 512), 
             nn.ReLU(),
             nn.Dropout(0.5),
             nn.Linear(512, num_classes)
