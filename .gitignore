@@ -3,7 +3,7 @@
 data/
 datasets/
 runs/
-production_weights/
+# production_weights/
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
