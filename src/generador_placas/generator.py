@@ -56,17 +56,25 @@ def get_pixel_width(fuente, texto):
     except: return 0
 
 def generar_texto_placa():
-    letras = string.ascii_uppercase
-    numeros = string.digits
+    #letras = string.ascii_uppercase
+    #numeros = string.digits
+    alfanumericos = "0123456789ABCDEFGHJKLMNPRSTUVWXYZ"
     
     try:
-        formato = random.choice(['LLL-NN-NN', 'A-NNN-LLL', 'LLL-NNN'])
-        if formato == 'LLL-NN-NN':
-            placa = f"{''.join(random.choices(letras, k=3))}-{''.join(random.choices(numeros, k=2))}-{''.join(random.choices(numeros, k=2))}"
-        elif formato == 'A-NNN-LLL':
-            placa = f"{random.choice(letras)}-{''.join(random.choices(numeros, k=3))}-{''.join(random.choices(letras, k=3))}"
-        elif formato == 'LLL-NNN':
-            placa = f"{''.join(random.choices(letras, k=3))}-{''.join(random.choices(numeros, k=3))}"
+        # Extraemos caracteres al azar de la MISMA bolsa para cualquier posición.
+        # Esto garantiza que una 'Z' tenga exactamente la misma probabilidad de 
+        # aparecer que un '9', balanceando el dataset orgánicamente.
+        formato = random.choice(['FORMATO_7', 'FORMATO_6_A', 'FORMATO_6_B'])
+        
+        if formato == 'FORMATO_7':
+            # Ej: XXX-XX-XX (7 caracteres + 2 guiones)
+            placa = f"{''.join(random.choices(alfanumericos, k=3))}-{''.join(random.choices(alfanumericos, k=2))}-{''.join(random.choices(alfanumericos, k=2))}"
+        elif formato == 'FORMATO_6_A':
+            # Ej: X-XXX-XXX (7 caracteres + 2 guiones)
+            placa = f"{random.choice(alfanumericos)}-{''.join(random.choices(alfanumericos, k=3))}-{''.join(random.choices(alfanumericos, k=3))}"
+        elif formato == 'FORMATO_6_B':
+            # Ej: XXX-XXX (6 caracteres + 1 guion)
+            placa = f"{''.join(random.choices(alfanumericos, k=3))}-{''.join(random.choices(alfanumericos, k=3))}"
         else:
             placa = "ABC-123"
     except:
@@ -333,22 +341,23 @@ def worker_task(idx):
 
 # --- 8. MAIN ---
 
-def generar_dataset(cantidad=20000):
+def generar_dataset(cantidad=2000):
     if not FUENTES_DISPONIBLES:
-        print(f"❌ ERROR: Sin fuentes en {DIR_FUENTES}")
+        print(f"ERROR: Sin fuentes en {DIR_FUENTES}")
         return
     if not PLANTILLAS_DISPONIBLES:
-        print(f"❌ ERROR: Sin plantillas en {DIR_PLANTILLAS}")
+        print(f"ERROR: Sin plantillas en {DIR_PLANTILLAS}")
         return
 
-    print(f"🚀 Generando {cantidad} placas (Con Inversión Negativa)...")
+    print(f"Generando {cantidad} placas (Con Inversión Negativa)...")
     
     img_dir = DIR_DATASET / "images"
     lbl_dir = DIR_DATASET / "labels"
     os.makedirs(img_dir, exist_ok=True)
     os.makedirs(lbl_dir, exist_ok=True)
     
-    chars = string.ascii_uppercase + string.digits + "-"
+    #chars = string.ascii_uppercase + string.digits + "-"
+    chars = "0123456789ABCDEFGHJKLMNPRSTUVWXYZ-"
     char_to_id = {c: i for i, c in enumerate(chars)}
     
     tasks = list(range(cantidad))
@@ -377,7 +386,7 @@ def generar_dataset(cantidad=20000):
                 f.write('\n'.join(lines))
             exitos += 1
 
-    print(f"\n🏁 Terminado. Exitos: {exitos} | Fallos: {len(errores_log)}")
+    print(f"\nTerminado. Exitos: {exitos} | Fallos: {len(errores_log)}")
     if errores_log: print("Errores:", errores_log[:3])
 
 if __name__ == "__main__":

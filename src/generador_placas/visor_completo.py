@@ -47,7 +47,9 @@ def visualizar_pipeline_detallado():
         return
 
     # 1. Configuración Inicial
-    plantilla = random.choice(PLANTILLAS_DISPONIBLES)
+    #plantilla = random.choice(PLANTILLAS_DISPONIBLES)
+    ruta_plantilla = DIR_PLANTILLAS / "89.png"  # Plantilla específica
+    plantilla = str(ruta_plantilla)
     fuentes = FUENTES_DISPONIBLES 
     texto = generar_texto_placa()
     

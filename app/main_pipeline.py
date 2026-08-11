@@ -27,7 +27,6 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RUTA_AUTOS = os.path.join(BASE_DIR, '../production_weights/01_autos_best.pt')
 RUTA_PLACAS = os.path.join(BASE_DIR, '../production_weights/02_placas_best.pt')
 RUTA_OCR = os.path.join(BASE_DIR, '../production_weights/03_caracteres_best.pth')
-
 RUTA_YOLO_CLS = os.path.join(BASE_DIR, '../production_weights/03_yolo_cls_best.pt')
 detector_cls = YOLO(RUTA_YOLO_CLS)
 
