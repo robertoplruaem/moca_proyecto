@@ -204,11 +204,44 @@ def procesar_imagen_cv2(img_cv2):
             placa_rectificada = rectificar_perspectiva_placa(recorte_placa)
             caracteres_crudos = segmentar_caracteres_crudos(placa_rectificada)
             
+            # 3. NUEVO: Fallback de Polaridad Dinámica
             if len(caracteres_crudos) < 4:
+
+                # --- IMPRIMIR CONTEO INICIAL ---
+                print("\n[ALERTA] Posible placa oscura detectada.")
+                print(f"-> Intento A (Estándar): Solo se aislaron {len(caracteres_crudos)} caracteres.")
+                
+                # --- INICIO DE EXTRACCIÓN DE IMÁGENES PARA LA TESIS ---
+                # 1. Guardar la placa original (fondo oscuro) rectificada
+                cv2.imwrite("tesis_01_placa_oscura_original.jpg", placa_rectificada)
+                
+                # 2. Guardar la binarización errónea inicial (simulando lo que vio segmentar_caracteres_crudos)
+                gris_erroneo = cv2.cvtColor(placa_rectificada, cv2.COLOR_BGR2GRAY)
+                _, binaria_erronea = cv2.threshold(gris_erroneo, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+                cv2.imwrite("tesis_02_binarizacion_erronea.jpg", binaria_erronea)
+                
+                # Invertimos los colores matemáticamente
                 placa_invertida = cv2.bitwise_not(placa_rectificada)
+                
+                # 3. Guardar la placa con colores invertidos
+                cv2.imwrite("tesis_03_placa_invertida.jpg", placa_invertida)
+                
+                # 4. Guardar la binarización exitosa
+                gris_exitoso = cv2.cvtColor(placa_invertida, cv2.COLOR_BGR2GRAY)
+                _, binaria_exitosa = cv2.threshold(gris_exitoso, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+                cv2.imwrite("tesis_04_binarizacion_exitosa.jpg", binaria_exitosa)
+                # --- FIN DE EXTRACCIÓN DE IMÁGENES ---                
+
+                # Intento B: Segmentación asumiendo placa oscura
                 caracteres_alternativos = segmentar_caracteres_crudos(placa_invertida)
+
+                # --- IMPRIMIR CONTEO SECUNDARIO ---
+                print(f"-> Intento B (Invertido): Se aislaron {len(caracteres_alternativos)} caracteres.")
+                
+                # Si la versión invertida logra "ver" más letras, nos quedamos con esa
                 if len(caracteres_alternativos) > len(caracteres_crudos):
                     caracteres_crudos = caracteres_alternativos
+            
             
             registro_tiempos['preprocesamiento_cv2'].append((time.perf_counter() - t0) * 1000)
 
@@ -303,4 +336,4 @@ def ejecutar_prueba_rendimiento(carpeta_imagenes):
     print("="*60)
 
 # Para ejecutar la prueba, puedes llamar a esta función al final del archivo o desde otra terminal:
-# ejecutar_prueba_rendimiento(os.path.join(BASE_DIR, '../datasets/04_imagenes_reales'))
+ejecutar_prueba_rendimiento(os.path.join(BASE_DIR, '../datasets/05_placa_oscura'))
