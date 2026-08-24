@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
+import time
 from ultralytics import YOLO
 from customOCR_CNN import CustomOCR_CNN
 
@@ -17,6 +18,16 @@ RUTA_AUTOS = os.path.join(BASE_DIR, '../production_weights/01_autos_best.pt')
 RUTA_PLACAS = os.path.join(BASE_DIR, '../production_weights/02_placas_best.pt')
 RUTA_OCR = os.path.join(BASE_DIR, '../production_weights/03_caracteres_best.pth')
 RUTA_YOLO_CLS = os.path.join(BASE_DIR, '../production_weights/03_yolo_cls_best.pt')
+
+# --- REGISTRO DE TIEMPOS GLOBAL ---
+registro_tiempos = {
+    'det_vehiculo': [],
+    'det_placa': [],
+    'preprocesamiento_cv2': [],
+    'ocr_dual': [],
+    'total_pipeline': []
+}
+vehiculos_procesados = 0
 
 # --- 2. INICIALIZAR MODELOS ---
 print("Cargando modelos en memoria...")
@@ -75,44 +86,20 @@ def rectificar_perspectiva_placa(img_placa):
     return img_placa
 
 def corregir_polaridad_placa(img_placa):
-    """
-    Analiza la luminosidad de la franja central de la placa.
-    Si detecta un fondo oscuro (placa de Guerrero/Edomex), 
-    invierte los colores (bitwise_not) para simular una placa blanca estándar.
-    """
     alto, ancho = img_placa.shape[:2]
-    
-    # Extraemos exclusivamente la franja central (evitando los bordes blancos de la placa)
-    # Tomamos del 30% al 70% del alto, donde con seguridad están las letras y el fondo dominante
     franja_central = img_placa[int(alto * 0.30):int(alto * 0.70), :]
-    
-    # Convertimos a escala de grises para medir la intensidad de luz
     gris_central = cv2.cvtColor(franja_central, cv2.COLOR_BGR2GRAY)
-    
-    # Calculamos la media de luminosidad (0 = Negro absoluto, 255 = Blanco absoluto)
     luminosidad_promedio = np.mean(gris_central)
     
-    # Un fondo guinda/oscuro suele tener una media inferior a 110.
-    # Un fondo blanco/claro suele tener una media superior a 150.
     if luminosidad_promedio < 110:
-        # bitwise_not invierte la matriz: lo negro se hace blanco y viceversa.
-        # El guinda se hace claro y las letras blancas se hacen negras.
         placa_invertida = cv2.bitwise_not(img_placa)
         return placa_invertida
         
-    # Si la placa es clara, la devolvemos intacta
     return img_placa
 
 def preprocesar_y_estandarizar_caracter(recorte_bgr, tamano_destino=128):
-    """Binariza, limpia fracturas y centra el carácter en un lienzo blanco estandarizado."""
     gris = cv2.cvtColor(recorte_bgr, cv2.COLOR_BGR2GRAY)
-    #binaria = cv2.adaptiveThreshold(gris, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
-    
-    # 1. (Opcional pero muy recomendado) Aplicar un desenfoque mediano ligero antes 
-    # para "matar" los píxeles de ruido aislados sin difuminar los bordes duros de la letra.
     gris = cv2.medianBlur(gris, 3)
-
-    # 2. Binarización con radio ampliado (21) y mayor exigencia de contraste (5)
     binaria = cv2.adaptiveThreshold(gris, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 21, 5)
     
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
@@ -131,7 +118,6 @@ def preprocesar_y_estandarizar_caracter(recorte_bgr, tamano_destino=128):
     return cv2.cvtColor(lienzo, cv2.COLOR_GRAY2RGB)
 
 def segmentar_caracteres_crudos(img_placa):
-    """Encuentra y extrae los recortes de los caracteres sin procesarlos matemáticamente."""
     alto_placa, ancho_placa = img_placa.shape[:2]
     gris = cv2.cvtColor(img_placa, cv2.COLOR_BGR2GRAY)
     _, binaria = cv2.threshold(gris, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
@@ -142,7 +128,6 @@ def segmentar_caracteres_crudos(img_placa):
         x, y, w, h = cv2.boundingRect(c)
         es_caracter_estandar = (h > w * 1.1) and (h > alto_placa * 0.45)
         es_guion = (w >= h * 0.9) and (h > alto_placa * 0.03) and (w < ancho_placa * 0.15)
-        
         centro_y = y + (h / 2)
         esta_en_franja_central = (centro_y > alto_placa * 0.25) and (centro_y < alto_placa * 0.75)
         
@@ -177,7 +162,6 @@ def segmentar_caracteres_crudos(img_placa):
     return recortes_individuales
 
 def inferencia_cnn(img_rgb_128):
-    """Realiza la conversión a tensor y la predicción en PyTorch."""
     mean, std = np.array([0.485, 0.456, 0.406]), np.array([0.229, 0.224, 0.225])
     img_float = (img_rgb_128.astype(np.float32) / 255.0 - mean) / std
     img_final = np.transpose(img_float, (2, 0, 1))
@@ -193,72 +177,64 @@ def inferencia_yolo(img_rgb_128):
     res = detector_cls.predict(img_rgb_128, verbose=False)[0]
     return res.names[res.probs.top1]
 
-# --- 4. PIPELINE PRINCIPAL ---
+# --- 4. PIPELINE PRINCIPAL (Con medición de latencia) ---
 def procesar_imagen_cv2(img_cv2):
+    global vehiculos_procesados
     resultados_finales = []
+    
+    t_inicio_total = time.perf_counter()
+    
+    t0 = time.perf_counter()
     res_autos = detector_autos.predict(img_cv2, conf=0.5, verbose=False)[0]
+    registro_tiempos['det_vehiculo'].append((time.perf_counter() - t0) * 1000)
     
     for caja_auto in res_autos.boxes.xyxy:
         x1, y1, x2, y2 = map(int, caja_auto)
         recorte_auto = img_cv2[y1:y2, x1:x2]
         
+        t0 = time.perf_counter()
         res_placas = detector_placas.predict(recorte_auto, conf=0.40, verbose=False)[0]
+        registro_tiempos['det_placa'].append((time.perf_counter() - t0) * 1000)
+        
         for caja_placa in res_placas.boxes.xyxy:
             px1, py1, px2, py2 = map(int, caja_placa)
             recorte_placa = recorte_auto[py1:py2, px1:px2]
             
-            # 1. Aplanamos la geometría
+            t0 = time.perf_counter()
             placa_rectificada = rectificar_perspectiva_placa(recorte_placa)
-            
-            # 2. Intento A: Segmentación asumiendo placa blanca estándar
             caracteres_crudos = segmentar_caracteres_crudos(placa_rectificada)
             
-            # 3. NUEVO: Fallback de Polaridad Dinámica
-            # Una placa mexicana tiene entre 5 y 7 caracteres. Si encuentra 3 o menos, 
-            # es muy probable que la binarización haya fallado por fondo oscuro o sombra.
             if len(caracteres_crudos) < 4:
-                # Invertimos los colores matemáticamente
                 placa_invertida = cv2.bitwise_not(placa_rectificada)
-                
-                # Intento B: Segmentación asumiendo placa oscura
                 caracteres_alternativos = segmentar_caracteres_crudos(placa_invertida)
-                
-                # Si la versión invertida logra "ver" más letras, nos quedamos con esa
                 if len(caracteres_alternativos) > len(caracteres_crudos):
                     caracteres_crudos = caracteres_alternativos
+            
+            registro_tiempos['preprocesamiento_cv2'].append((time.perf_counter() - t0) * 1000)
 
             texto_cnn, texto_yolo = "", ""
             confianzas_caracteres = []
             detalles_caracteres = []
             
+            t0 = time.perf_counter()
             for i, recorte_crudo in enumerate(caracteres_crudos):
-                # -----------------------------------------------------------
-                # 1. CORRIENTE CNN: Preprocesamiento matemático (Binarizado)
-                # -----------------------------------------------------------
                 img_lista_128_cnn = preprocesar_y_estandarizar_caracter(recorte_crudo, tamano_destino=128)
-                
                 char_cnn, conf = inferencia_cnn(img_lista_128_cnn)
                 texto_cnn += char_cnn
                 confianzas_caracteres.append(conf)
                 
-                # -----------------------------------------------------------
-                # 2. CORRIENTE YOLO: Preprocesamiento fotográfico (Texturas)
-                # -----------------------------------------------------------
-                # Replicamos el trato exacto que tenía tu código original:
-                gris_yolo = cv2.cvtColor(recorte_crudo, cv2.COLOR_BGR2GRAY)
-                img_128_yolo = cv2.resize(gris_yolo, (128, 128), interpolation=cv2.INTER_AREA)
-                img_yolo_final = cv2.cvtColor(img_128_yolo, cv2.COLOR_GRAY2RGB)
+                # gris_yolo = cv2.cvtColor(recorte_crudo, cv2.COLOR_BGR2GRAY)
+                # img_128_yolo = cv2.resize(gris_yolo, (128, 128), interpolation=cv2.INTER_AREA)
+                # img_yolo_final = cv2.cvtColor(img_128_yolo, cv2.COLOR_GRAY2RGB)
+                # texto_yolo += inferencia_yolo(img_yolo_final)
                 
-                texto_yolo += inferencia_yolo(img_yolo_final)
-                
-                # -----------------------------------------------------------
-                # Guardar evidencia visual (Mostramos la versión de la CNN en la web)
-                # -----------------------------------------------------------
                 detalles_caracteres.append({
                     'imagen_128': img_lista_128_cnn,
                     'char_cnn': char_cnn,
                     'conf': conf
                 })
+            # registro_tiempos['ocr_dual'].append((time.perf_counter() - t0) * 1000)
+            registro_tiempos['ocr_dual'].append((time.perf_counter() - t0) * 1000)
 
             conf_media = sum(confianzas_caracteres) / len(confianzas_caracteres) if confianzas_caracteres else 0.0
 
@@ -266,10 +242,65 @@ def procesar_imagen_cv2(img_cv2):
                 resultados_finales.append({
                     'texto_cnn': texto_cnn,
                     'confianza_media': conf_media,
-                    'texto_yolo': texto_yolo,
+                    #'texto_yolo': texto_yolo,
                     'caja': (x1 + px1, y1 + py1, x1 + px2, y1 + py2),
                     'recorte': recorte_placa,
                     'recorte_auto': recorte_auto,
                     'detalles': detalles_caracteres
                 })
+                vehiculos_procesados += 1
+                registro_tiempos['total_pipeline'].append((time.perf_counter() - t_inicio_total) * 1000)
+                
     return resultados_finales
+
+# --- 5. FUNCIÓN DE PRUEBA Y REPORTE DE LATENCIA ---
+def ejecutar_prueba_rendimiento(carpeta_imagenes):
+    archivos = [f for f in os.listdir(carpeta_imagenes) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+    if not archivos:
+        print("No se encontraron imágenes en el directorio proporcionado.")
+        return
+
+    print("\nIniciando Warm-up (Precalentamiento de GPU)...")
+    img_warmup = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    for _ in range(2):
+        procesar_imagen_cv2(img_warmup)
+    
+    # Limpiamos los registros contaminados por el Warm-up
+    for key in registro_tiempos:
+        registro_tiempos[key].clear()
+    global vehiculos_procesados
+    vehiculos_procesados = 0
+    
+    print(f"Iniciando inferencia sobre {len(archivos)} imágenes...")
+    
+    for idx, archivo in enumerate(archivos):
+        ruta_img = os.path.join(carpeta_imagenes, archivo)
+        img_cv2 = cv2.imread(ruta_img)
+        if img_cv2 is not None:
+            procesar_imagen_cv2(img_cv2)
+            print(f"Procesada {idx+1}/{len(archivos)}: {archivo}", end='\r')
+            
+    print("\n\n" + "="*60)
+    print("     REPORTE DE TIEMPOS DE INFERENCIA (MILISEGUNDOS)     ")
+    print("="*60)
+    print(f"Total de vehículos exitosamente procesados: {vehiculos_procesados}")
+
+    if vehiculos_procesados > 0:
+        prom_auto = np.mean(registro_tiempos['det_vehiculo'])
+        prom_placa = np.mean(registro_tiempos['det_placa'])
+        prom_cv2 = np.mean(registro_tiempos['preprocesamiento_cv2'])
+        prom_ocr = np.mean(registro_tiempos['ocr_dual'])
+        prom_total = np.mean(registro_tiempos['total_pipeline'])
+        fps_promedio = 1000 / prom_total
+        
+        print(f"1. Detección de Vehículo (YOLOv11):          {prom_auto:.2f} ms")
+        print(f"2. Detección de Placa en Recorte (YOLO11n):  {prom_placa:.2f} ms")
+        print(f"3. Rectificación y Preprocesamiento (CV2):   {prom_cv2:.2f} ms")
+        print(f"4. Inferencia OCR Dual (CNN + YOLO-cls):     {prom_ocr:.2f} ms")
+        print("-" * 60)
+        print(f"TIEMPO TOTAL POR VEHÍCULO (Latencia E2E):    {prom_total:.2f} ms")
+        print(f"RENDIMIENTO ESTIMADO EN TIEMPO REAL:         {fps_promedio:.2f} FPS")
+    print("="*60)
+
+# Para ejecutar la prueba, puedes llamar a esta función al final del archivo o desde otra terminal:
+# ejecutar_prueba_rendimiento(os.path.join(BASE_DIR, '../datasets/04_imagenes_reales'))
