@@ -2,6 +2,7 @@ import os
 import cv2
 import numpy as np
 import torch
+import torchvision
 import torch.nn.functional as F
 import time
 from ultralytics import YOLO
@@ -256,10 +257,10 @@ def procesar_imagen_cv2(img_cv2):
                 texto_cnn += char_cnn
                 confianzas_caracteres.append(conf)
                 
-                # gris_yolo = cv2.cvtColor(recorte_crudo, cv2.COLOR_BGR2GRAY)
-                # img_128_yolo = cv2.resize(gris_yolo, (128, 128), interpolation=cv2.INTER_AREA)
-                # img_yolo_final = cv2.cvtColor(img_128_yolo, cv2.COLOR_GRAY2RGB)
-                # texto_yolo += inferencia_yolo(img_yolo_final)
+                gris_yolo = cv2.cvtColor(recorte_crudo, cv2.COLOR_BGR2GRAY)
+                img_128_yolo = cv2.resize(gris_yolo, (128, 128), interpolation=cv2.INTER_AREA)
+                img_yolo_final = cv2.cvtColor(img_128_yolo, cv2.COLOR_GRAY2RGB)
+                texto_yolo += inferencia_yolo(img_yolo_final)
                 
                 detalles_caracteres.append({
                     'imagen_128': img_lista_128_cnn,
@@ -275,7 +276,7 @@ def procesar_imagen_cv2(img_cv2):
                 resultados_finales.append({
                     'texto_cnn': texto_cnn,
                     'confianza_media': conf_media,
-                    #'texto_yolo': texto_yolo,
+                    'texto_yolo': texto_yolo,
                     'caja': (x1 + px1, y1 + py1, x1 + px2, y1 + py2),
                     'recorte': recorte_placa,
                     'recorte_auto': recorte_auto,
@@ -336,4 +337,5 @@ def ejecutar_prueba_rendimiento(carpeta_imagenes):
     print("="*60)
 
 # Para ejecutar la prueba, puedes llamar a esta función al final del archivo o desde otra terminal:
-ejecutar_prueba_rendimiento(os.path.join(BASE_DIR, '../datasets/05_placa_oscura'))
+# ejecutar_prueba_rendimiento(os.path.join(BASE_DIR, '../datasets/05_placa_oscura'))
+ejecutar_prueba_rendimiento(os.path.join(BASE_DIR, '../datasets/04_imagenes_reales'))
